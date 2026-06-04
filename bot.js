@@ -49,16 +49,38 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
+// ─── Botoes de cargo clicados ─────────────────────────────────────────────────
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isButton()) return;
+  if (!interaction.customId.startsWith('role_')) return;
+
+  const roleId = interaction.customId.replace('role_', '');
+  const member = interaction.member;
+
+  try {
+    if (member.roles.cache.has(roleId)) {
+      await member.roles.remove(roleId);
+      await interaction.reply({ content: 'Cargo removido!', ephemeral: true });
+    } else {
+      await member.roles.add(roleId);
+      await interaction.reply({ content: 'Cargo adicionado!', ephemeral: true });
+    }
+  } catch (e) {
+    await interaction.reply({ content: 'Erro ao modificar cargo. Verifique se o bot tem permissao.', ephemeral: true });
+  }
+});
+
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
+  // ─── Sessoes ativas ───────────────────────────────────────────────────────
   if (embedSessions.has(message.author.id)) {
     const session = embedSessions.get(message.author.id);
     const resposta = message.content.trim();
 
     if (resposta.toLowerCase() === 'cancelar') {
       embedSessions.delete(message.author.id);
-      return message.reply('Criacao de embed cancelada.');
+      return message.reply('Criacao cancelada.');
     }
 
     if (session.step === 'titulo') {
@@ -74,14 +96,9 @@ client.on('messageCreate', async (message) => {
     }
 
     if (session.step === 'cor') {
-      if (resposta === '-') {
-        session.data.cor = 0x5865F2;
-      } else {
-        const hex = resposta.replace('#', '');
-        session.data.cor = parseInt(hex, 16) || 0x5865F2;
-      }
+      session.data.cor = resposta === '-' ? 0x5865F2 : (parseInt(resposta.replace('#', ''), 16) || 0x5865F2);
       session.step = 'autor';
-      return message.reply('**Autor** (nome no topo do embed) (ou `-` para pular):');
+      return message.reply('**Autor** (nome no topo) (ou `-` para pular):');
     }
 
     if (session.step === 'autor') {
@@ -94,7 +111,12 @@ client.on('messageCreate', async (message) => {
       session.data.rodape = resposta === '-' ? null : resposta;
       session.step = 'botoes';
       session.data.botoes = [];
-      return message.reply('**Botoes** - manda o nome e link separado por |\nEx: Grupo do Roblox | https://roblox.com/groups/123\nQuando terminar manda: pronto');
+
+      if (session.type === 'role') {
+        return message.reply('**Botoes de cargo** - manda o nome e ID do cargo separado por |\nEx: Importante | 123456789012345678\nQuando terminar manda: pronto\n\nPara pegar o ID do cargo: Configuracoes do servidor > Cargos > segura o cargo > Copiar ID');
+      } else {
+        return message.reply('**Botoes de link** - manda o nome e link separado por |\nEx: Grupo do Roblox | https://roblox.com/groups/123\nQuando terminar manda: pronto');
+      }
     }
 
     if (session.step === 'botoes') {
@@ -111,12 +133,21 @@ client.on('messageCreate', async (message) => {
           for (let i = 0; i < d.botoes.length; i += 5) {
             const row = new ActionRowBuilder();
             d.botoes.slice(i, i + 5).forEach(b => {
-              row.addComponents(
-                new ButtonBuilder()
-                  .setLabel(b.nome)
-                  .setURL(b.url)
-                  .setStyle(ButtonStyle.Link)
-              );
+              if (session.type === 'role') {
+                row.addComponents(
+                  new ButtonBuilder()
+                    .setLabel(b.nome)
+                    .setCustomId('role_' + b.valor)
+                    .setStyle(ButtonStyle.Secondary)
+                );
+              } else {
+                row.addComponents(
+                  new ButtonBuilder()
+                    .setLabel(b.nome)
+                    .setURL(b.valor)
+                    .setStyle(ButtonStyle.Link)
+                );
+              }
             });
             components.push(row);
           }
@@ -129,19 +160,21 @@ client.on('messageCreate', async (message) => {
 
       if (resposta.includes('|')) {
         if (session.data.botoes.length >= 25) {
-          return message.reply('Maximo de 25 botoes atingido. Manda pronto para enviar.');
+          return message.reply('Maximo de 25 botoes. Manda pronto para enviar.');
         }
         const partes = resposta.split('|');
         const nome = partes[0].trim();
-        const url = partes[1].trim();
-        if (!url.startsWith('http')) {
-          return message.reply('Link invalido! Precisa comecar com http. Tenta de novo.');
+        const valor = partes[1].trim();
+
+        if (session.type === 'link' && !valor.startsWith('http')) {
+          return message.reply('Link invalido! Precisa comecar com http.');
         }
-        session.data.botoes.push({ nome, url });
+
+        session.data.botoes.push({ nome, valor });
         return message.reply('Botao "' + nome + '" adicionado! Manda mais ou pronto para enviar.');
       }
 
-      return message.reply('Formato invalido. Use: Nome | https://link.com ou manda pronto');
+      return message.reply('Formato invalido. Use: Nome | Valor ou manda pronto');
     }
 
     return;
@@ -157,10 +190,11 @@ client.on('messageCreate', async (message) => {
       .setTitle('Lista de Comandos')
       .setColor(0x5865F2)
       .addFields(
-        { name: '!criembed', value: 'Cria embed personalizado com botoes de link' },
-        { name: '!embed [titulo] | [descricao]', value: 'Cria embed rapido' },
-        { name: '!clear [numero]', value: 'Apaga mensagens do canal (max 100)' },
-        { name: '!raidinfo', value: 'Mostra status do anti-raid' },
+        { name: '!criembed', value: 'Embed com botoes de link personalizados' },
+        { name: '!rolemembed', value: 'Embed com botoes que dao/removem cargos' },
+        { name: '!embed [titulo] | [descricao]', value: 'Embed rapido' },
+        { name: '!clear [numero]', value: 'Apaga mensagens (max 100)' },
+        { name: '!raidinfo', value: 'Status do anti-raid' },
       )
       .setFooter({ text: 'Bot feito com discord.js' })
       .setTimestamp();
@@ -168,8 +202,13 @@ client.on('messageCreate', async (message) => {
   }
 
   if (comando === 'criembed') {
-    embedSessions.set(message.author.id, { step: 'titulo', data: {} });
-    return message.reply('Vamos criar seu embed! (manda cancelar a qualquer momento)\n\n**Titulo** (ou `-` para pular):');
+    embedSessions.set(message.author.id, { step: 'titulo', type: 'link', data: {} });
+    return message.reply('Vamos criar o embed! (manda cancelar para sair)\n\n**Titulo** (ou `-` para pular):');
+  }
+
+  if (comando === 'rolemembed') {
+    embedSessions.set(message.author.id, { step: 'titulo', type: 'role', data: {} });
+    return message.reply('Vamos criar o embed de cargos! (manda cancelar para sair)\n\n**Titulo** (ou `-` para pular):');
   }
 
   if (comando === 'embed') {
